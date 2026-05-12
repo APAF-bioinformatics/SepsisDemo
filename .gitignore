@@ -1,0 +1,12 @@
+# Data and Results
+data/
+results/
+results_summary/
+
+# R/RStudio
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+.Rapp.history
+.DS_Store
