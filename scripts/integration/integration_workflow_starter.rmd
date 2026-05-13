@@ -70,7 +70,7 @@ sources like R and Python (for MOFA2).
 NUMBER OF DEPENDENCIES TO INSTALL, INCLUDING THE PYTHON ENVIRONMENT FOR
 MOFA2.** **THIS IS A GOOD POINT TO GRAB A COFFEE!**
 
-```{r 1 MultiScholaR FIRST INSTALL, message=TRUE, warning=TRUE}
+```{r 1 MultiScholaR FIRST INSTALL, message=TRUE, warning=TRUE, eval=FALSE}
 installMultiScholaR <- function(verbose = TRUE) {
     # Install devtools if missing
     if (!requireNamespace("devtools", quietly = TRUE)) {
@@ -168,6 +168,8 @@ loadDependencies()
     BiocManager::install("MOFA2")
 }
 library(MOFA2)
+source("rank_enrichment_stringdb.R")
+
 ```
 
 
@@ -1149,6 +1151,10 @@ transcriptomics_sort_updated <- transcriptomics_sort |>
                             , proteome = t(scale(t(proteomics_sort_updated)))
                             , metabolome_lc = t(scale(t(metabolomics_assay_1_sort)))
                             , metabolome_gc = t(scale(t(metabolomics_assay_2_sort))) )
+  
+  
+  ## show me the first five rows of each table
+  purrr::map( mofa_matrix_input, head)
 ```
 
 ## Prepare the Design Matrix and Sample Grouping Factor
@@ -1811,6 +1817,286 @@ sample_metadata <- data.frame(
 
 samples_metadata(model) <- sample_metadata
 head(model@samples_metadata, n=3)
+```
+
+
+## Understanding How MOFA Latent Factors Are Derived
+
+### Further Reading
+
+#### Mathematical Foundations of MOFA
+
+-   [MOFA2 Technical Paper](https://www.embopress.org/doi/full/10.15252/msb.20199306) - Complete mathematical framework behind MOFA
+-   [Variational Bayesian Factor Analysis](https://www.jmlr.org/papers/volume3/bishop99a/bishop99a.pdf) - Theoretical foundation of variational inference in factor models
+-   [Multi-Omics Factor Analysis](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-020-1983-x) - Comprehensive review of factor analysis methods in multi-omics
+-   [Bayesian Inference for Latent Variable Models](https://www.nature.com/articles/s41592-019-0616-3) - Understanding Bayesian approaches to latent factor models
+
+#### Computational Implementation
+
+-   [Python MOFA Implementation (mofapy2)](https://github.com/bioFAM/mofapy2) - Source code showing the computational implementation
+-   [Variational Inference Tutorial](https://arxiv.org/abs/1601.00670) - Understanding the optimization approach used in MOFA
+-   [Evidence Lower Bound (ELBO)](https://arxiv.org/abs/1906.05346) - Mathematical objective function optimized during training
+
+This section explains the mathematical and computational process by which MOFA derives latent factors from multi-omics data. Understanding this process is crucial for interpreting the biological meaning of the factors and their associated feature weights.
+
+### The Mathematical Framework
+
+MOFA (Multi-Omics Factor Analysis) uses a generative model approach to identify latent factors that explain variation across multiple data types. The core mathematical formulation is:
+
+**Y_m = Z * W_m + ε_m**
+
+Where:
+- **Y_m**: Observed data matrix for view m (e.g., transcriptomics, proteomics)
+- **Z**: Latent factor matrix (samples × factors) - *this is what we want to learn*
+- **W_m**: Weight matrix for view m (features × factors) - *these connect factors to features*
+- **ε_m**: Noise term for view m
+
+The goal is to decompose the observed data into:
+1. **Shared patterns** captured by the latent factors (Z)
+2. **View-specific loadings** that connect these patterns to molecular features (W_m)
+3. **Residual noise** that cannot be explained by the factors
+
+### The Learning Process
+
+Let's examine how MOFA actually derives these latent factors:
+
+```{r Understanding MOFA Factor Derivation}
+# ==============================================================================
+# STEP 1: Understanding the Input Data Structure
+# ==============================================================================
+
+cat("=== MOFA Input Data Structure ===\n")
+cat("The MOFA model receives data as a list of matrices, where:\n")
+cat("- Each matrix represents one 'view' (omics layer)\n")
+cat("- Rows = features (genes, proteins, etc.)\n")
+cat("- Columns = samples\n")
+cat("- All matrices must have the same samples (columns) in the same order\n\n")
+
+# Display the structure of our input data
+for (view_name in names(mofa_matrix_input)) {
+    cat(sprintf("View: %s\n", view_name))
+    cat(sprintf(
+        "  Dimensions: %d features × %d samples\n",
+        nrow(mofa_matrix_input[[view_name]]),
+        ncol(mofa_matrix_input[[view_name]])
+    ))
+    cat(sprintf(
+        "  Data range: %.3f to %.3f\n",
+        min(mofa_matrix_input[[view_name]], na.rm = TRUE),
+        max(mofa_matrix_input[[view_name]], na.rm = TRUE)
+    ))
+    cat(sprintf(
+        "  Number of missing values: %d\n\n",
+        sum(is.na(mofa_matrix_input[[view_name]]))
+    ))
+}
+```
+
+```{r}
+# ==============================================================================
+# STEP 2: Examining the Model Training Process
+# ==============================================================================
+
+cat("=== MOFA Training Process ===\n")
+cat("MOFA uses Variational Bayesian Inference to learn the latent factors.\n")
+cat("This is an iterative optimization process that:\n")
+cat("1. Initializes random factors (Z) and weights (W)\n")
+cat("2. Iteratively updates these parameters to maximize the Evidence Lower Bound (ELBO)\n")
+cat("3. Converges when the ELBO stops improving significantly\n\n")
+
+# Display training options that were used
+cat("Training configuration used:\n")
+print(train_opts)
+
+cat("\nModel configuration used:\n")
+print(model_opts)
+
+# ==============================================================================
+# STEP 3: Understanding Factor Interpretation
+# ==============================================================================
+
+cat("\n=== Factor Interpretation ===\n")
+
+# Extract the learned factors (Z matrix)
+factor_values <- get_factors(model, as.data.frame = FALSE)
+cat("Learned factor matrix (Z) dimensions:\n")
+for (group in names(factor_values)) {
+    cat(sprintf(
+        "Group %s: %d factors × %d samples\n",
+        group, nrow(factor_values[[group]]), ncol(factor_values[[group]])
+    ))
+}
+
+# Extract the learned weights (W matrices)
+weight_values <- get_weights(model, as.data.frame = FALSE)
+cat("\nLearned weight matrices (W) dimensions:\n")
+for (view in names(weight_values)) {
+    cat(sprintf(
+        "View %s: %d features × %d factors\n",
+        view, nrow(weight_values[[view]]), ncol(weight_values[[view]])
+    ))
+}
+```
+
+```{r}
+# ==============================================================================
+# STEP 4: Demonstrating the Decomposition
+# ==============================================================================
+
+cat("\n=== Data Reconstruction Example ===\n")
+cat("Each data point can be reconstructed as: Y[feature,sample] = Σ(Z[sample,factor] * W[feature,factor])\n\n")
+
+# Let's demonstrate this for a few examples
+# Get the first group's factors and first view's weights
+Z_matrix <- factor_values[[1]] # factors × samples
+W_matrix <- weight_values[[1]] # features × factors
+
+cat("Matrix dimensions for reconstruction:\n")
+cat("Z_matrix (factors):", dim(Z_matrix), "\n")
+cat("W_matrix (weights):", dim(W_matrix), "\n")
+cat("Original data:", dim(mofa_matrix_input[[1]]), "\n")
+
+# For reconstruction: Y = W * Z^T (where Y is features × samples)
+# Z_matrix is factors × samples, so we need to transpose it
+# W_matrix is features × factors
+# Result should be features × samples
+if (ncol(W_matrix) == nrow(Z_matrix)) {
+    # W_matrix %*% Z_matrix would give features × samples
+    reconstructed_data <- W_matrix %*% Z_matrix
+} else {
+    # Need to transpose Z_matrix: W_matrix %*% t(Z_matrix)
+    reconstructed_data <- W_matrix %*% t(Z_matrix)
+}
+
+cat("Original data matrix dimensions:", dim(mofa_matrix_input[[1]]), "\n")
+cat("Reconstructed data matrix dimensions:", dim(reconstructed_data), "\n")
+
+# Calculate reconstruction quality (R-squared)
+original_flat <- as.vector(mofa_matrix_input[[1]])
+reconstructed_flat <- as.vector(reconstructed_data)
+
+# Remove missing values for correlation calculation
+complete_cases <- complete.cases(original_flat, reconstructed_flat)
+correlation <- cor(original_flat[complete_cases], reconstructed_flat[complete_cases])
+r_squared <- correlation^2
+
+cat(sprintf("Reconstruction quality (R²): %.4f\n", r_squared))
+cat(sprintf("This means MOFA factors explain %.1f%% of the total variance in this view\n\n", r_squared * 100))
+```
+
+
+```{r}
+# ==============================================================================
+# STEP 5: Factor Interpretation Through Examples
+# ==============================================================================
+
+cat("=== Factor Biological Interpretation ===\n")
+
+# Show how factor values vary across samples
+factor_df <- get_factors(model, as.data.frame = TRUE)
+cat("Factor values across samples:\n")
+print(head(factor_df))
+
+# Show sample metadata to understand what factors might represent
+sample_meta <- samples_metadata(model)
+cat("\nSample metadata:\n")
+print(head(sample_meta))
+
+
+# Examine if factors correlate with experimental conditions
+if ("condition" %in% colnames(sample_meta)) {
+    cat("\nFactor 1 values by experimental condition:\n")
+    factor1_by_condition <- factor_df %>%
+        filter(factor == "Factor1") %>%
+        left_join(sample_meta, by = "sample") %>%
+        group_by(condition) %>%
+        summarise(
+            mean_factor_value = mean(value, na.rm = TRUE),
+            sd_factor_value = sd(value, na.rm = TRUE),
+            n_samples = n(),
+            .groups = "drop"
+        )
+    print(factor1_by_condition)
+}
+```
+
+
+```{r}
+# ==============================================================================
+# STEP 6: Feature Weight Interpretation
+# ==============================================================================
+
+cat("\n=== Feature Weight Interpretation ===\n")
+cat("Feature weights (W matrix) tell us how each molecular feature contributes to each factor.\n")
+cat("High positive weights: feature increases when factor increases\n")
+cat("High negative weights: feature decreases when factor increases\n")
+cat("Near-zero weights: feature is not associated with this factor\n\n")
+
+# Show top weighted features for Factor 1
+weights_df <- get_weights(model, as.data.frame = TRUE)
+
+for (view_name in unique(weights_df$view)) {
+    cat(sprintf("Top 5 features with highest absolute weights in %s for Factor 1:\n", view_name))
+
+    top_features <- weights_df %>%
+        filter(view == view_name, factor == "Factor1") %>%
+        mutate(abs_weight = abs(value)) %>%
+        arrange(desc(abs_weight)) %>%
+        head(5) %>%
+        dplyr::select(feature, value, abs_weight)
+
+    print(top_features)
+    cat("\n")
+}
+```
+
+### Understanding Total and Residual Variance
+
+In MOFA, **variance** refers to the amount of spread or variability in your data. MOFA's goal is to capture as much of that complex variation as possible using a small number of simplified "factors".
+
+**1. Total Variance**
+- **What it is:** A measure of the overall spread or "information content" present in your original, raw data matrix for a specific omics layer (e.g., your entire proteomics dataset).
+- **How it is calculated:** For every single feature (e.g., every protein), the algorithm calculates the mean (average) value across all samples. It then calculates the squared difference between each sample's actual value and that mean value. The sum of all these squared differences across all features and all samples gives the Total Variance for that view.
+- **Formula:** `Total Variance = Variance(Y)`, where Y is your original data matrix.
+
+**2. Residual Variance**
+- **What it is:** The "leftover" variance—the variability in your data that the MOFA factors **failed** to capture. 
+- **How it is calculated:** MOFA tries to approximate your original data by multiplying its learned Factors (Z) and Weights (W). This creates a "reconstructed" data matrix (Y_reconstructed). The algorithm calculates the difference (the error or "residual") between your actual data and this reconstructed data: `Residuals = Y - Y_reconstructed`. It then calculates the variance of these residuals using the same method as above (squaring the differences from the mean of the residuals).
+- **Formula:** `Residual Variance = Variance(Y - Y_reconstructed)`.
+
+**Putting it together (R²)**
+To figure out what percentage of the total variance was successfully captured by the factors, we calculate:
+`R² = 1 - (Residual Variance / Total Variance)`
+
+- **If R² is 0.80 (80%)**: The MOFA factors successfully reconstructed 80% of the original patterns in your data, and 20% of the data's variability is considered unexplained noise.
+- **If R² is close to 0**: The factors aren't capturing much meaningful biological variation at all, and almost everything is residual noise.
+
+```{r}
+# ==============================================================================
+# STEP 7: Variance Explained Calculation
+# ==============================================================================
+
+cat("=== How Variance Explained is Calculated ===\n")
+cat("MOFA calculates variance explained using the formula:\n")
+cat("R² = 1 - (residual_variance / total_variance)\n")
+cat("Where residual_variance = variance of (Y - Y_reconstructed)\n\n")
+
+# Access the variance explained that was calculated during training
+variance_explained <- model@cache$variance_explained
+cat("Variance explained by all factors in each view:\n")
+print(variance_explained$r2_total)
+
+cat("\nVariance explained by each factor in each view:\n")
+print(variance_explained$r2_per_factor)
+
+cat("\n=== Summary of MOFA Factor Derivation ===\n")
+cat("1. MOFA receives multiple data matrices (views) with matched samples\n")
+cat("2. It assumes each data point is generated by: Y = Z*W + noise\n")
+cat("3. Variational Bayesian inference iteratively learns Z (factors) and W (weights)\n")
+cat("4. The algorithm maximizes the Evidence Lower Bound (ELBO) until convergence\n")
+cat("5. Resulting factors capture shared patterns across all omics layers\n")
+cat("6. Feature weights show how each molecular entity contributes to each factor\n")
+cat("7. Variance explained quantifies how well factors capture the original data variation\n")
 ```
 
 ## Variance Decomposition
@@ -2709,7 +2995,7 @@ list_of_views <- colnames( model@cache$variance_explained$r2_per_factor[[1]])
 list_of_weights_figures <- purrr::map( list_of_views
                                        , \(x) {plotMofaWeights( view= x
                                                                 , model = model
-                                                                , factor_level = "Factor1")} )
+                                                                , factor_level = Factor1)} )
 
 list_of_weights_figures
 
