@@ -818,6 +818,13 @@ printStringDbFunctionalEnrichmentBarGraph <- function (input_table, word_limit =
     stop(paste("The following required columns are missing from the input table:", paste(missing_cols, collapse = ", ")))
   }
 
+  if (nrow(input_table) == 0) {
+    message("No enrichment results found to plot.")
+    return(ggplot() + 
+             annotate("text", x = 0.5, y = 0.5, label = "No enrichment results found") + 
+             theme_void())
+  }
+
   plot_data <- input_table |>
     group_by(.data$comparison, .data$category, .data$termDescription) |>
     arrange( desc( .data$enrichmentScore), .data$falseDiscoveryRate ) |>
